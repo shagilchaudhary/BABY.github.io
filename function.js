@@ -1,246 +1,89 @@
-let range = n => Array.from(Array(n).keys())
+var canvas;
+var stage;
+var container;
+var captureContainers;
+var captureIndex;
 
-class Vector {
+function init() {
+  // create a new stage and point it at our canvas:
+  canvas = document.getElementById("testCanvas");
+  stage = new createjs.Stage(canvas);
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
 
-    constructor(x = 0, y = 0) {
-        this.x = x;
-        this.y = y;
-    }
+  var w = canvas.width;
+  var h = canvas.height;
 
-    reflect() {
-        return new Vector(-this.x, -this.y);
-    }
+  container = new createjs.Container();
+  stage.addChild(container);
 
-    add(vector) {
-        return new Vector(this.x + vector.x, this.y + vector.y);
-    }
+  captureContainers = [];
+  captureIndex = 0;
 
-    subtract(vector) {
-        return new Vector(this.x - vector.x, this.y - vector.y);
-    }
+  // create a large number of slightly complex vector shapes, and give them random positions and velocities:
+  for (var i = 0; i < 100; i++) {
+    var heart = new createjs.Shape();
+    heart.graphics.beginFill(createjs.Graphics.getHSL(Math.random() * 30 - 45, 100, 50 + Math.random() * 30));
+    heart.graphics.moveTo(0, -12).curveTo(1, -20, 8, -20).curveTo(16, -20, 16, -10).curveTo(16, 0, 0, 12);
+    heart.graphics.curveTo(-16, 0, -16, -10).curveTo(-16, -20, -8, -20).curveTo(-1, -20, 0, -12);
+    heart.y = -100;
 
-    scale(scalar = 1) {
-        return new Vector(this.x * scalar, this.y * scalar);
-    }
+    container.addChild(heart);
+  }
 
-    length() {
-        return Math.sqrt(this.x * this.x + this.y * this.y);
-    }
+  var text = new createjs.Text("the longer I'm with you\nthe more I love you", "bold 24px Arial", "#312");
+  text.textAlign = "center";
+  text.x = w / 2;
+  text.y = h / 2 - text.getMeasuredLineHeight();
+  stage.addChild(text);
 
-    distance(vector) {
-        let dx = this.x - vector.x;
-        let dy = this.y - vector.y;
+  for (i = 0; i < 100; i++) {
+    var captureContainer = new createjs.Container();
+    captureContainer.cache(0, 0, w, h);
+    captureContainers.push(captureContainer);
+  }
 
-        return Math.sqrt(dx * dx + dy * dy);
-    }
-
+  // start the tick and point it at the window so we can do some work before updating the stage:
+  createjs.Ticker.timingMode = createjs.Ticker.RAF;
+  createjs.Ticker.on("tick", tick);
 }
 
-class IO {
+function tick(event) {
+  var w = canvas.width;
+  var h = canvas.height;
+  var l = container.numChildren;
 
-    constructor() {
-        this.mouse = new Vector();
-        this.bindMouse();
+  captureIndex = (captureIndex + 1) % captureContainers.length;
+  stage.removeChildAt(0);
+  var captureContainer = captureContainers[captureIndex];
+  stage.addChildAt(captureContainer, 0);
+  captureContainer.addChild(container);
+
+  // iterate through all the children and move them according to their velocity:
+  for (var i = 0; i < l; i++) {
+    var heart = container.getChildAt(i);
+    if (heart.y < -50) {
+      heart._x = Math.random() * w;
+      heart.y = h * (1 + Math.random()) + 50;
+      heart.perX = (1 + Math.random() * 2) * h;
+      heart.offX = Math.random() * h;
+      heart.ampX = heart.perX * 0.1 * (0.15 + Math.random());
+      heart.velY = -Math.random() * 2 - 1;
+      heart.scaleX = heart.scaleY = Math.random() * 2 + 1;
+      heart._rotation = Math.random() * 40 - 20;
+      heart.alpha = Math.random() * 0.75 + 0.05;
+      heart.compositeOperation = Math.random() < 0.33 ? "lighter" : "source-over";
     }
+    var int = (heart.offX + heart.y) / heart.perX * Math.PI * 2;
+    heart.y += heart.velY * heart.scaleX / 2;
+    heart.x = heart._x + Math.cos(int) * heart.ampX;
+    heart.rotation = heart._rotation + Math.sin(int) * 30;
+  }
 
-    bindMouse() {
-        window.addEventListener('mousemove', ({ x , y }) => {
-            this.mouse.x = x;
-            this.mouse.y = y;
-        });
-    }
+  captureContainer.updateCache("source-over");
 
+  // draw the updates to stage:
+  stage.update(event);
 }
 
-class Point {
-
-    constructor({ position = new Vector(), color = '#f00', size = 3 }) {
-        this.position = position;
-        this.color = color;
-        this.size = size;
-    }
-
-    render(ctx) {
-        ctx.beginPath();
-
-        ctx.fillStyle = this.color;
-        ctx.arc(this.position.x, this.position.y, this.size, 0, 2 * Math.PI);
-        ctx.fill();
-
-        ctx.closePath();
-    }
-
-}
-
-class SpringPoint extends Point {
-
-    constructor({ target = new Vector(), elasticity = 1e-1, color = 'rgba(255, 0, 0, .6)', size = 3, damping = 1e-1 }) {
-        super({ position: target, color, size });
-        this.velocity = new Vector();
-        this.target = target;
-        this.elasticity = elasticity;
-        this.damping = damping;
-    }
-
-    updateVelocity() {
-        let damping = this.velocity.scale(this.damping);
-        let force = this.target
-            .subtract(this.position)
-            .scale(this.elasticity)
-            .subtract(damping);
-
-        this.velocity = this.velocity.add(force);
-    }
-
-    updatePosition() {
-        this.position = this.position.add(this.velocity);
-    }
-
-    update() {
-        this.updatePosition();
-        this.updateVelocity();
-    }
-
-}
-
-class SpringTrail extends SpringPoint {
-
-    constructor(config) {
-        super(config);
-        this.trail = range(config.trailSize || 10).map(index => {
-            config.target = this.position;
-            config.elasticity = 1 / (index * 8);
-            config.damping = 8 / (index * 10 + 5);
-            return new SpringPoint(config);
-        });
-    }
-
-    update() {
-        super.update();
-        this.trail.forEach(point => point.update());
-    }
-
-    render(ctx) {
-        super.render(ctx);
-        this.trail.forEach(point => point.render(ctx));
-    }
-
-}
-
-
-class Physics {
-
-    update(objects) {
-        objects.forEach(object => object.update());
-    }
-
-}
-
-class Renderer {
-
-    constructor(ctx, size = { width: 100, height: 100 }) {
-        this.ctx = ctx;
-        this.size = size;
-    }
-
-    render(objects) {
-        objects.forEach(object => object.render(ctx));
-    }
-
-    clear() {
-        this.ctx.fillStyle = 'rgba(0, 0, 0, .2)';
-        this.ctx.fillRect(0, 0, this.size.width, this.size.height);
-    }
-
-}
-
-class Engine {
-
-    constructor(physics, renderer, objects = []) {
-        this.physics = physics;
-        this.renderer = renderer;
-        this.objects = objects;
-    }
-
-    add(...objects) {
-        this.objects = this.objects.concat(objects);
-    }
-
-    tick() {
-        this.physics.update(this.objects);
-    }
-
-    render() {
-        this.renderer.render(this.objects);
-    }
-
-    clear() {
-        this.renderer.clear();
-    }
-
-}
-
-
-let canvas = document.getElementById('canvas');
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
-let ctx = canvas.getContext('2d');
-
-let io = new IO();
-let engine = new Engine(
-    new Physics(),
-    new Renderer(ctx, { width: canvas.width, height: canvas.height })
-);
-
-let origin = new Vector(canvas.width / 2, canvas.height / 2);
-
-// This  is what generates the shape
-let polar = (rad, time) => {
-    rad += Math.sin(time / 100);
-    let x = 16 * Math.sin(rad) ** 3;
-    let y = 13 * Math.cos(rad) - 5 * Math.cos(2 * rad) - 2 * Math.cos(3 * rad) - Math.cos(4 * rad);
-    let scale = (Math.sin(time / 10) + 3) * 4;
-    return new Vector(x * scale, -y * scale)
-        .add(origin.add(io.mouse.subtract(origin).scale(0.5)));
-};
-
-let random = (min = 0, max = 1) => Math.random() * (max - min) + min;
-
-let targetsSize = 60;
-
-// Creating the points for the shape
-let targets = [];
-for (let i = 0;i < targetsSize; i++) {
-    let target = new Vector(random(0, canvas.width), random(0, canvas.height));
-    engine.add(new SpringTrail({ target: target, size: 1.3, trailSize: 10, color: "rgba(230, 10, 40, 0.8)" }));
-    targets.push(target);
-}
-
-let time = 0;
-(function animate(){
-    time++;
-    engine.clear();
-    engine.tick();
-    engine.render();
-
-    updateTargets();
-
-    window.requestAnimationFrame(animate);
-})();
-
-// Applying the shape to the target points
-function updateTargets() {
-    for (let i = 0;i < targetsSize; i++) {
-        let lerp = i / (targetsSize - 1) * Math.PI * 2 + random() / 10;
-        let result = polar(lerp, time);
-        targets[i].x = result.x;
-        targets[i].y = result.y;
-
-        // Randomly swap two points
-        if (random() < 0.004) {
-            let rnd1 = Math.floor(random(0, targets.length));
-            let rnd2 = Math.floor(random(0, targets.length));
-            [targets[rnd1], targets[rnd2]] = [targets[rnd2], targets[rnd1]];
-        }
-    }
-}
+init();
